@@ -4,7 +4,7 @@ import { z } from "zod";
 
 // Days of the week
 export const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"] as const;
-export type Day = typeof DAYS[number];
+export type Day = (typeof DAYS)[number];
 
 // Time periods (school day divided into periods)
 export const PERIODS = [
@@ -15,9 +15,9 @@ export const PERIODS = [
   "12:00-13:00",
   "13:00-14:00",
   "14:00-15:00",
-  "15:00-16:00"
+  "15:00-16:00",
 ] as const;
-export type Period = typeof PERIODS[number];
+export type Period = (typeof PERIODS)[number];
 
 // Teachers
 export const teachers = pgTable("teachers", {
@@ -48,6 +48,10 @@ export const subjects = pgTable("subjects", {
   id: varchar("id").primaryKey(),
   name: text("name").notNull(),
   color: text("color").notNull(), // For visual display
+
+  // How many periods per week this subject should be scheduled.
+  // 0 means: do NOT schedule this subject at all.
+  lessonsPerWeek: integer("lessons_per_week").notNull().default(0),
 });
 
 export const insertSubjectSchema = createInsertSchema(subjects).omit({ id: true });
@@ -63,7 +67,9 @@ export const availability = pgTable("availability", {
   available: boolean("available").notNull().default(true),
 });
 
-export const insertAvailabilitySchema = createInsertSchema(availability).omit({ id: true });
+export const insertAvailabilitySchema = createInsertSchema(availability).omit({
+  id: true,
+});
 export type InsertAvailability = z.infer<typeof insertAvailabilitySchema>;
 export type Availability = typeof availability.$inferSelect;
 
@@ -77,7 +83,9 @@ export const timetableEntries = pgTable("timetable_entries", {
   period: text("period").notNull(),
 });
 
-export const insertTimetableEntrySchema = createInsertSchema(timetableEntries).omit({ id: true });
+export const insertTimetableEntrySchema = createInsertSchema(timetableEntries).omit({
+  id: true,
+});
 export type InsertTimetableEntry = z.infer<typeof insertTimetableEntrySchema>;
 export type TimetableEntry = typeof timetableEntries.$inferSelect;
 
@@ -88,25 +96,12 @@ export type TimetableEntryWithDetails = TimetableEntry & {
   class: Class;
 };
 
-// Class Subject Requirements
-export const classSubjectRequirements = pgTable("class_subject_requirements", {
-  id: varchar("id").primaryKey(),
-  classId: varchar("class_id").notNull(),
-  subjectId: varchar("subject_id").notNull(),
-  timesPerWeek: integer("times_per_week").notNull().default(1),
-});
-
-export const insertClassSubjectRequirementSchema = createInsertSchema(classSubjectRequirements).omit({ id: true });
-export type InsertClassSubjectRequirement = z.infer<typeof insertClassSubjectRequirementSchema>;
-export type ClassSubjectRequirement = typeof classSubjectRequirements.$inferSelect;
-
 // Conflict type
 export type Conflict = {
-  type: "teacher_double_booking" | "unassigned_period" | "teacher_unavailable" | "missing_subject";
+  type: "teacher_double_booking" | "unassigned_period" | "teacher_unavailable";
   message: string;
   day: Day;
   period: Period;
   classId?: string;
   teacherId?: string;
-  subjectId?: string;
 };
