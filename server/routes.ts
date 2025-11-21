@@ -13,8 +13,12 @@ import {
   type Period,
 } from "@shared/schema";
 
+type RequirementsMap = Record<string, Record<string, number>>; // classId -> subjectId -> periods per week
+
 export async function registerRoutes(app: Express): Promise<Server> {
+  // --------------------
   // Teachers
+  // --------------------
   app.get("/api/teachers", async (_req, res) => {
     const teachers = await storage.getTeachers();
     res.json(teachers);
@@ -33,7 +37,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = insertTeacherSchema.parse(req.body);
       const teacher = await storage.createTeacher(data);
       res.json(teacher);
-    } catch (error) {
+    } catch {
       res.status(400).json({ error: "Invalid teacher data" });
     }
   });
@@ -47,7 +51,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = insertTeacherSchema.parse(req.body);
       const teacher = await storage.updateTeacher(req.params.id, data);
       res.json(teacher);
-    } catch (error) {
+    } catch {
       res.status(400).json({ error: "Invalid teacher data" });
     }
   });
@@ -61,7 +65,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ success: true });
   });
 
+  // --------------------
   // Classes
+  // --------------------
   app.get("/api/classes", async (_req, res) => {
     const classes = await storage.getClasses();
     res.json(classes);
@@ -80,7 +86,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = insertClassSchema.parse(req.body);
       const classData = await storage.createClass(data);
       res.json(classData);
-    } catch (error) {
+    } catch {
       res.status(400).json({ error: "Invalid class data" });
     }
   });
@@ -94,7 +100,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = insertClassSchema.parse(req.body);
       const classData = await storage.updateClass(req.params.id, data);
       res.json(classData);
-    } catch (error) {
+    } catch {
       res.status(400).json({ error: "Invalid class data" });
     }
   });
@@ -108,7 +114,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ success: true });
   });
 
+  // --------------------
   // Subjects
+  // --------------------
   app.get("/api/subjects", async (_req, res) => {
     const subjects = await storage.getSubjects();
     res.json(subjects);
@@ -127,7 +135,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = insertSubjectSchema.parse(req.body);
       const subject = await storage.createSubject(data);
       res.json(subject);
-    } catch (error) {
+    } catch {
       res.status(400).json({ error: "Invalid subject data" });
     }
   });
@@ -141,7 +149,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = insertSubjectSchema.parse(req.body);
       const subject = await storage.updateSubject(req.params.id, data);
       res.json(subject);
-    } catch (error) {
+    } catch {
       res.status(400).json({ error: "Invalid subject data" });
     }
   });
@@ -155,7 +163,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ success: true });
   });
 
+  // --------------------
   // Availability
+  // --------------------
   app.get("/api/availability/:teacherId", async (req, res) => {
     const teacher = await storage.getTeacher(req.params.teacherId);
     if (!teacher) {
@@ -174,17 +184,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const availability = await storage.setAvailability(data);
       res.json(availability);
-    } catch (error) {
+    } catch {
       res.status(400).json({ error: "Invalid availability data" });
     }
   });
 
+  // --------------------
   // Timetable CRUD
+  // --------------------
   app.get("/api/timetable", async (req, res) => {
-    const { classId } = req.query;
-    const entries = await storage.getTimetableEntries(
-      typeof classId === "string" ? classId : undefined,
-    );
+    const classId =
+      typeof req.query.classId === "string" ? req.query.classId : undefined;
+    const entries = await storage.getTimetableEntries(classId);
     res.json(entries);
   });
 
@@ -243,16 +254,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
 
       if (conflict) {
-        return res
-          .status(400)
-          .json({
-            error: "Teacher is already assigned to another class at this time",
-          });
+        return res.status(400).json({
+          error: "Teacher is already assigned to another class at this time",
+        });
       }
 
       const entry = await storage.createTimetableEntry(data);
       res.json(entry);
-    } catch (error) {
+    } catch {
       res.status(400).json({ error: "Invalid timetable entry data" });
     }
   });
@@ -294,7 +303,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           .json({ error: "Teacher is not available at this time" });
       }
 
-      // Check for double-booking (excluding the current entry)
+      // Check for double-booking (excluding current entry)
       const allEntries = await storage.getTimetableEntries();
       const conflict = allEntries.find(
         (e) =>
@@ -305,16 +314,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
 
       if (conflict) {
-        return res
-          .status(400)
-          .json({
-            error: "Teacher is already assigned to another class at this time",
-          });
+        return res.status(400).json({
+          error: "Teacher is already assigned to another class at this time",
+        });
       }
 
       const entry = await storage.updateTimetableEntry(req.params.id, data);
       res.json(entry);
-    } catch (error) {
+    } catch {
       res.status(400).json({ error: "Invalid timetable entry data" });
     }
   });
@@ -328,28 +335,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ success: true });
   });
 
-  // Generate Timetable
-  app.post("/api/timetable/generate", async (_req, res) => {
+  // --------------------
+  // Generate Timetable (uses per-class requirements)
+  // --------------------
+  app.post("/api/timetable/generate", async (req, res) => {
     try {
-      // Clear existing timetable
+      // Body: { requirements: { [classId]: { [subjectId]: number } } }
+      const body = (req as any).body as { requirements?: RequirementsMap } | undefined;
+      const requirements: RequirementsMap = body?.requirements ?? {};
+
       await storage.clearTimetable();
 
-      const classes = await storage.getClasses();
       const teachers = await storage.getTeachers();
+      const classes = await storage.getClasses();
       const subjects = await storage.getSubjects();
 
-      if (classes.length === 0 || teachers.length === 0 || subjects.length === 0) {
+      if (teachers.length === 0 || classes.length === 0 || subjects.length === 0) {
         return res.status(400).json({
           error:
-            "Please ensure there are classes, teachers, and subjects defined before generating a timetable.",
+            "Cannot generate timetable without teachers, classes, and subjects",
         });
       }
 
-      // For each class, build its weekly timetable
+      // For each class, assign subjects according to its own requirements
       for (const classData of classes) {
+        const classReqs = requirements[classData.id] ?? {};
+
         const slots: Array<{ day: Day; period: Period }> = [];
 
-        // Create all possible time slots
+        // Build all possible time slots for the week
         for (const day of DAYS) {
           for (const period of PERIODS) {
             slots.push({ day, period });
@@ -364,10 +378,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         let slotIndex = 0;
 
-        // Assign each subject based on its weekly requirement.
-        // If lessonsPerWeek is 0 or not set, that subject will NOT be scheduled.
+        // For each subject, check this class's requirement
         for (const subject of subjects) {
-          const periodsPerWeek = subject.lessonsPerWeek ?? 0;
+          const periodsPerWeek = classReqs[subject.id] ?? 0;
+
+          // If no requirement (0 or undefined), skip this subject for this class
           if (!periodsPerWeek || periodsPerWeek <= 0) {
             continue;
           }
@@ -423,11 +438,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 day: slot.day,
                 period: slot.period,
               });
-              slotIndex++;
-            } else {
-              // No available teacher, skip this slot
-              slotIndex++;
             }
+
+            // Move to next slot whether we managed to assign or not
+            slotIndex++;
           }
         }
       }
@@ -440,7 +454,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // --------------------
   // Conflicts
+  // --------------------
   app.get("/api/conflicts", async (_req, res) => {
     const conflicts = await storage.detectConflicts();
     res.json(conflicts);
